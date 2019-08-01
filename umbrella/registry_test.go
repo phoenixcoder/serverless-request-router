@@ -9,7 +9,7 @@ import (
 
 const (
 	testRegJson = `{
-                           "command1": {
+                           "Command1": {
                                "reservedKeywords" : ["reservedKeywords1"],
                                "functions" : {
                                    "functions1" : {
@@ -22,7 +22,7 @@ const (
                            "command2": {
                                "reservedKeywords" : ["reservedKeywords2"],
                                "functions" : {
-                                   "functions2" : {
+                                   "Functions2" : {
                                        "usage" : "usage2",
                                        "description" : "description2",
                                        "manual" : "manual2"

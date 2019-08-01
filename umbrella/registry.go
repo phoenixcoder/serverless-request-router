@@ -26,6 +26,29 @@ type ArgsNotFoundError error
 type commandRegistry map[string]commandRecord
 type functionRegistry map[string]functionRecord
 
+func (cr *commandRegistry) UnmarshalJSON(text []byte) error {
+	var tempMap map[string]commandRecord
+	json.Unmarshal(text, &tempMap)
+
+	*cr = make(commandRegistry)
+	for key, val := range tempMap {
+		(*cr)[strings.ToLower(key)] = val
+	}
+
+	return nil
+}
+
+func (fr *functionRegistry) UnmarshalJSON(text []byte) error {
+	var tempMap map[string]functionRecord
+	json.Unmarshal(text, &tempMap)
+	*fr = make(functionRegistry)
+	for key, val := range tempMap {
+		(*fr)[strings.ToLower(key)] = val
+	}
+
+	return nil
+}
+
 type commandRecord struct {
 	ReservedKeywords []string         `json:"reservedKeywords"`
 	Functions        functionRegistry `json:"functions"`
