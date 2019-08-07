@@ -1,12 +1,11 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	slackauth "github.com/phoenixcoder/slack-golang-sdk/auth"
+	"github.com/phoenixcoder/slack-golang-sdk/slashcmd"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -28,118 +27,18 @@ const (
 	cmdRequestUrlRoot       = "requestUrl"
 	cmdFunctionsReg         = "functions"
 	contentTypeHeader       = "content-type"
-	// TODO Move these to a Slack-specific package.
-	slackCmdParam         = "command"
-	slackArgsParam        = "text"
-	slackResponseUrlParam = "response_url"
 )
 
 var (
 	// TODO Convert this registry to a generic Data Access Object (DAO)
 	//      that can pull from any data source.
-	commandRegistry map[string]cmdInfo
-	registryUrl     = os.Getenv(routerRegistryUrlEnvVar)
-	requestUrlRoot  = os.Getenv(requestUrlRootEnvVar)
+	registry       commandRegistry
+	registryUrl    = os.Getenv(routerRegistryUrlEnvVar)
+	requestUrlRoot = os.Getenv(requestUrlRootEnvVar)
 )
 
-type cmdInfo struct {
-	RequestUrl  string
-	HelpKeyword string
-	Functions   map[string]funcRoutingInfo
-}
-
-type funcRoutingInfo struct {
-	Name        string
-	RequestUrl  string
-	ResponseUrl string
-	Usage       string
-	Description string
-	Manual      string
-}
-
-// TODO Generalize away from Slack patterns.
-func getFuncRoutingInfo(reqUrlRoot string, values url.Values, cmdReg *map[string]cmdInfo) (*funcRoutingInfo, error) {
-	// TODO Polish the error handling here for Slack.
-	cmdList, cmdOk := values[slackCmdParam]
-	if !cmdOk {
-		return nil, errors.New("Command argument was not received.")
-	}
-
-	if len(cmdList) != 1 {
-		return nil, fmt.Errorf("Must have sent exactly 1 command. Command List: '%v'", cmdList)
-	}
-
-	cmd := strings.TrimLeft(cmdList[0], "/")
-	cmdInfo, cmdInfoExists := (*cmdReg)[cmd]
-	if !cmdInfoExists {
-		return nil, fmt.Errorf("Command is not registered. Command Name: '%s'", cmd)
-	}
-
-	funcReg := cmdInfo.Functions
-	if len(funcReg) <= 0 {
-		return nil, fmt.Errorf("Function registry for the command does not exist. Command Name: '%s'", cmd)
-	}
-
-	argsList, argsOk := values[slackArgsParam]
-	if !argsOk {
-		return nil, errors.New("Arguments list was not received.")
-	}
-
-	if len(argsList) <= 0 {
-		return nil, nil
-	}
-
-	funcName := argsList[0]
-	funcRoutingInfo, funcRoutingInfoOk := funcReg[funcName]
-	if !funcRoutingInfoOk {
-		return nil, fmt.Errorf("Function was not registered. Function Name: '%s'", funcName)
-	}
-
-	parsedRequestUrlRoot, err := url.Parse(reqUrlRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	requestUrl := parsedRequestUrlRoot
-	requestUrl.Path = path.Join(parsedRequestUrlRoot.Path, funcName)
-	funcRoutingInfo.Name = funcName
-	funcRoutingInfo.RequestUrl = requestUrl.String()
-	return &funcRoutingInfo, nil
-}
-
-func loadCommandRegistryFromFile(location string, registry *map[string]cmdInfo) {
-	// TODO If the file ever gets large enough, opening and unmarshalling it will cause
-	//      function overhead to increase, eventually to a point where invokes fail. If that
-	//      happens, it's time to move to a DB backend to retrieve function relay info.
-	// TODO Add metrics on time to load.
-	contents, err := ioutil.ReadFile(location)
-	if err != nil {
-		log.Fatalf("Could not open and read function registry. Error: %v\n", err)
-	}
-	log.Printf("%s\n", contents)
-
-	loadCommandRegistryFromContents(contents, registry)
-}
-
-func loadCommandRegistryFromContents(contents []byte, registry *map[string]cmdInfo) {
-	if err := json.Unmarshal(contents, registry); err != nil {
-		log.Fatalf("Could not unmarshal registry contents. Error: %v\n", err)
-	}
-}
-
-func loadCommandRegistryFromUrl(url string, registry *map[string]cmdInfo) {
-	log.Printf("Registry URL: %s\n", url)
-	resp, err := http.Get(url)
-	if err != nil {
-		log.Fatalf("Could not download registry contents. Error: %v\n", err)
-	}
-
-	contents, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		log.Fatalf("Could not read registry contents. Error: %v\n", err)
-	}
-
-	loadCommandRegistryFromContents(contents, registry)
+type httpClientInterface interface {
+	Post(url string, contentType string, body io.Reader) (*http.Response, error)
 }
 
 func setInternalErrCode(resp *events.APIGatewayProxyResponse, reason string) {
@@ -165,17 +64,15 @@ func setErredStatusCode(resp *events.APIGatewayProxyResponse, msg string, reason
 //    * Create/send request to endpoint with arguments from this request.
 // 3. Send immediate status OK reponse to caller unless authN failed.
 // 4. Create/send a request to response_url once response returns from endpoint.
-// TODO Currently, this routing mechanism is very specific to Slack. We may want
-//      to turn this into a general routing mechanism since this pattern shows up
-//      often.
-func handler(request events.APIGatewayProxyRequest) (*events.APIGatewayProxyResponse, error) {
+func routerHandler(request events.APIGatewayProxyRequest) (*events.APIGatewayProxyResponse, error) {
+	authNOk, err := slackauth.AuthenticateLambdaReq(&request)
 	resp := &events.APIGatewayProxyResponse{
 		StatusCode: http.StatusOK,
 		Body:       http.StatusText(http.StatusOK),
 	}
 
-	authNOk, err := slackauth.AuthenticateLambdaReq(&request)
 	if err != nil {
+		// TODO All errors with a response returning immediately must be marked as 200 with an error message.
 		setInternalErrCode(resp, err.Error())
 		return resp, nil
 	}
@@ -185,86 +82,58 @@ func handler(request events.APIGatewayProxyRequest) (*events.APIGatewayProxyResp
 		return resp, nil
 	}
 
-	values, err := url.ParseQuery(request.Body)
+	slashCmdInfo, err := slashcmd.Parse(request.Body)
 	if err != nil {
 		setInternalErrCode(resp, err.Error())
 		return resp, nil
 	}
 
-	funcRoutingInfo, err := getFuncRoutingInfo(requestUrlRoot, values, &commandRegistry)
+	// TODO Check for help keyword.
+	funcName := slashCmdInfo.Arguments[0]
+	pReqUrlRoot, err := url.Parse(requestUrlRoot)
 	if err != nil {
-		setInternalErrCode(resp, err.Error())
-		return resp, nil
+		return nil, err
 	}
 
-	// The responseUrl extraction is not a part of the function
-	// routing info extraction since it is Slack-specific.
-	// TODO Generalize an alternate response-path.
-	responseUrlList, responseUrlListOk := values[slackResponseUrlParam]
-	// If this is not here, you want to respond right away before
-	// the Slack service closes their end of the connection. It will
-	// be the only way to speak to the user. Otherwise, they'll see
-	// Slack's response, which may be nothing at all.
-	if !responseUrlListOk || len(responseUrlList) <= 0 {
-		setInternalErrCode(resp, "Could not parse response url.")
-		return resp, nil
-	}
-	funcRoutingInfo.ResponseUrl = responseUrlList[0]
-
-	resp, err = routeRequestWaitForResp(funcRoutingInfo, &request)
-
-	log.Printf(logMsg, http.StatusText(resp.StatusCode), resp.Body)
-	return resp, nil
+	// TODO Retrieve function record when help keyword is accessed.
+	reqUrl := pReqUrlRoot
+	reqUrl.Path = path.Join(pReqUrlRoot.Path, funcName)
+	return routeRequest(reqUrl.String(), request.Body, &http.Client{Timeout: time.Second * timeout})
 }
 
-func routeRequestWaitForResp(routeInfo *funcRoutingInfo, request *events.APIGatewayProxyRequest) (*events.APIGatewayProxyResponse, error) {
-	log.Printf("Routing Info: '%+v\n'", *routeInfo)
-	log.Printf("Request to Route: '%+v\n'", *request)
+func routeRequest(requestUrl string, body string, client httpClientInterface) (*events.APIGatewayProxyResponse, error) {
+	log.Printf("Route Request Url: %s\n", requestUrl)
+	log.Printf("Route Request Body: %s\n", body)
 	resp := &events.APIGatewayProxyResponse{
 		Headers:    make(map[string]string),
 		StatusCode: http.StatusOK,
 		Body:       http.StatusText(http.StatusOK),
 	}
 
-	routerClient := http.Client{
-		Timeout: time.Second * timeout,
-	}
-
-	req, err := http.NewRequest(http.MethodPost, routeInfo.RequestUrl, strings.NewReader(request.Body))
+	routedResp, err := client.Post(requestUrl, "", strings.NewReader(body))
 	if err != nil {
 		setInternalErrCode(resp, err.Error())
 		return resp, err
 	}
 
-	routedResp, err := routerClient.Do(req)
-	if err != nil {
-		setInternalErrCode(resp, err.Error())
-		return resp, err
-	}
-	log.Printf("Routed Response: %+v\n", routedResp)
-
-	defer routedResp.Body.Close()
 	resp.StatusCode = routedResp.StatusCode
+	routedRespBody, err := ioutil.ReadAll(routedResp.Body)
 	if err != nil {
 		setInternalErrCode(resp, err.Error())
 		return resp, err
 	}
-
-	body, err := ioutil.ReadAll(routedResp.Body)
-	if err != nil {
-		setInternalErrCode(resp, err.Error())
-		return resp, err
-	}
-	resp.Body = string(body)
-
+	resp.Body = string(routedRespBody)
 	resp.Headers[contentTypeHeader] = routedResp.Header.Get(contentTypeHeader)
-	log.Printf("Delegate Function Response: '%+v'\n", resp)
 	return resp, err
 }
 
 func main() {
 	// TODO Perform smart loading of contents for local testing. Flags > Local Variables > Environment Variable > Configuration File search.
-	loadCommandRegistryFromUrl(registryUrl, &commandRegistry)
-	log.Printf("Loaded Command Registry: %+v\n", commandRegistry)
-	lambda.Start(handler)
+	registry, err := NewCommandRegistryFromUrl(registryUrl)
+	if err != nil {
+		log.Fatalf("Failed Command Registry Loading: %+v\n", err)
+	} else {
+		log.Printf("Command Registry Loaded: %+v\n", registry)
+		lambda.Start(routerHandler)
+	}
 }
