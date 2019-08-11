@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -18,6 +19,8 @@ const (
 	errDlRegFmt        = "Could not download registry contents. Error: %v\n"
 	errReadRegFmt      = "Could not read registry contents. Error: %v\n"
 	errFuncNotFoundFmt = "We're embarassed for you, but we don't know a '%s'."
+	regFileEnvVar      = "REGISTRY_FILE_PATH"
+	regUrlEnvVar       = "REGISTRY_URL"
 )
 
 type CommandNotFoundError error
@@ -81,7 +84,33 @@ func (cr *commandRegistry) getFunctionRecord(cmd *slashcmd.Info) (*functionRecor
 	return &funcRec, nil
 }
 
-func NewCommandRegistry(contents []byte) (*commandRegistry, error) {
+func NewCommandRegistry(location string) (*commandRegistry, error) {
+	reg, err := NewCommandRegistryFromFile(location)
+	if err == nil {
+		return reg, nil
+	}
+
+	reg, err = NewCommandRegistryFromUrl(location)
+	if err == nil {
+		return reg, nil
+	}
+
+	regFileEVLoc := os.Getenv(regFileEnvVar)
+	reg, err = NewCommandRegistryFromFile(regFileEVLoc)
+	if err == nil {
+		return reg, nil
+	}
+
+	regUrlEVLoc := os.Getenv(regUrlEnvVar)
+	reg, err = NewCommandRegistryFromUrl(regUrlEVLoc)
+	if err == nil {
+		return reg, nil
+	}
+
+	return nil, fmt.Errorf("Failed Dynamic Loading of Registry. Location: %s, Error: %s\n", location, err.Error())
+}
+
+func NewCommandRegistryFromContents(contents []byte) (*commandRegistry, error) {
 	var cr commandRegistry
 	if err := json.Unmarshal(contents, &cr); err != nil {
 		return nil, err
@@ -90,16 +119,22 @@ func NewCommandRegistry(contents []byte) (*commandRegistry, error) {
 	return &cr, nil
 }
 
-func NewCommandRegistryFromFile(location string) (*commandRegistry, error) {
-	contents, err := ioutil.ReadFile(location)
+func NewCommandRegistryFromFile(fileLoc string) (*commandRegistry, error) {
+	if fileLoc == "" {
+		return nil, errors.New("File location must not be empty.")
+	}
+	contents, err := ioutil.ReadFile(fileLoc)
 	if err != nil {
 		return nil, err
 	}
 
-	return NewCommandRegistry(contents)
+	return NewCommandRegistryFromContents(contents)
 }
 
 func NewCommandRegistryFromUrl(url string) (*commandRegistry, error) {
+	if url == "" {
+		return nil, errors.New("Url must not be empty.")
+	}
 	log.Printf(logRegUrl, url)
 	resp, err := http.Get(url)
 	if err != nil {
@@ -113,5 +148,5 @@ func NewCommandRegistryFromUrl(url string) (*commandRegistry, error) {
 		return nil, err
 	}
 
-	return NewCommandRegistry(contents)
+	return NewCommandRegistryFromContents(contents)
 }

@@ -40,7 +40,7 @@ const (
 
 func TestGetFunctionRecord(t *testing.T) {
 	fmtStr := "%s%d"
-	cmdReg, err := NewCommandRegistry([]byte(testRegJson))
+	cmdReg, err := NewCommandRegistryFromContents([]byte(testRegJson))
 	assert.Nil(t, err)
 
 	for i := 1; i <= 2; i++ {
@@ -61,7 +61,7 @@ func TestLoadRegistryFromMalformedContents(t *testing.T) {
 	testMalRegJson := `{
            malformed
         }`
-	cmdReg, err := NewCommandRegistry([]byte(testMalRegJson))
+	cmdReg, err := NewCommandRegistryFromContents([]byte(testMalRegJson))
 	assert.Nil(t, cmdReg)
 	assert.NotNil(t, err)
 }
@@ -79,7 +79,7 @@ func TestCommandNotFoundError(t *testing.T) {
 }
 
 func TestFunctionNotFoundError(t *testing.T) {
-	cmdReg, err := NewCommandRegistry([]byte(testRegJson))
+	cmdReg, err := NewCommandRegistryFromContents([]byte(testRegJson))
 	assert.Nil(t, err)
 	cmd := &slashcmd.Info{
 		Command:   testCommand,
