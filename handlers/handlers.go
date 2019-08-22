@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"github.com/phoenixcoder/serverless-request-router/router"
 	"io"
 	"io/ioutil"
 	"log"
@@ -23,17 +24,17 @@ const (
 )
 
 // TODO Move to a separate package.
-func setInternalErrCode(task *TaskMap, reason string) {
+func setInternalErrCode(task *router.TaskMap, reason string) {
 	setErredStatusCode(task, internalErrRespMsg, reason, http.StatusInternalServerError)
 }
 
 // TODO Move to a separate package.
-func setForbiddenErrCode(task *TaskMap) {
+func setForbiddenErrCode(task *router.TaskMap) {
 	setErredStatusCode(task, forbiddenErrRespMsg, "You're just not allowed.", http.StatusForbidden)
 }
 
 // TODO Move to a separate package.
-func setErredStatusCode(task *TaskMap, msg string, reason string, statusCode int) {
+func setErredStatusCode(task *router.TaskMap, msg string, reason string, statusCode int) {
 	(*task)["StatusCode"] = statusCode
 	(*task)["Body"] = msg + " (" + http.StatusText(statusCode) + ")"
 	log.Printf(logMsg, (*task)["Body"], reason)
@@ -62,14 +63,14 @@ func NewProxyHandler(client httpClientInterface) ProxyHandler {
 }
 
 // Before method that does nothing.
-func (p *ProxyHandler) Before(context *ContextMap, task *TaskMap) bool {
+func (p *ProxyHandler) Before(context *router.ContextMap, task *router.TaskMap) bool {
 	return false
 }
 
 // Execute method that inspects the context for a request url and sends
 // an http request to that url. It sends the response of the request
 // back in the task.
-func (p *ProxyHandler) Execute(context *ContextMap, task *TaskMap) {
+func (p *ProxyHandler) Execute(context *router.ContextMap, task *router.TaskMap) {
 	body := (*task)[TaskBody]
 	bodyStr, _ := body.(string)
 	contentType := (*context)[contentTypeHeader]
@@ -98,4 +99,4 @@ func (p *ProxyHandler) Execute(context *ContextMap, task *TaskMap) {
 }
 
 // After method that does nothing.
-func (p *ProxyHandler) After(context *ContextMap, task *TaskMap) {}
+func (p *ProxyHandler) After(context *router.ContextMap, task *router.TaskMap) {}

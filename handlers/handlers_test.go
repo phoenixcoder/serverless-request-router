@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"errors"
+	"github.com/phoenixcoder/serverless-request-router/router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"io"
@@ -42,8 +43,8 @@ func (m *mockHttpClient) Post(url string, contentType string, body io.Reader) (*
 }
 
 func TestProxyHandler(t *testing.T) {
-	testCtx := make(ContextMap)
-	testTask := make(TaskMap)
+	testCtx := make(router.ContextMap)
+	testTask := make(router.TaskMap)
 	testResp := &http.Response{
 		Body: ioutil.NopCloser(strings.NewReader(testProxyBody)),
 	}
@@ -68,8 +69,8 @@ func TestProxyHandler(t *testing.T) {
 
 func TestProxyHandlerPostError(t *testing.T) {
 	testError := errors.New("Post Error")
-	testCtx := make(ContextMap)
-	testTask := make(TaskMap)
+	testCtx := make(router.ContextMap)
+	testTask := make(router.TaskMap)
 	testResp := &http.Response{}
 	mHttpClient := new(mockHttpClient)
 	mReader := new(mockReader)
@@ -96,8 +97,8 @@ func TestProxyHandlerPostError(t *testing.T) {
 
 func TestProxyHandlerReadingError(t *testing.T) {
 	testError := errors.New("Reading Error")
-	testCtx := make(ContextMap)
-	testTask := make(TaskMap)
+	testCtx := make(router.ContextMap)
+	testTask := make(router.TaskMap)
 	testResp := &http.Response{}
 	mHttpClient := new(mockHttpClient)
 	mReader := new(mockReader)
@@ -123,8 +124,8 @@ func TestProxyHandlerReadingError(t *testing.T) {
 }
 
 func TestProxyHandlerNoRequestUrl(t *testing.T) {
-	testCtx := make(ContextMap)
-	testTask := make(TaskMap)
+	testCtx := make(router.ContextMap)
+	testTask := make(router.TaskMap)
 	testResp := &http.Response{}
 	mHttpClient := new(mockHttpClient)
 	mReader := new(mockReader)
